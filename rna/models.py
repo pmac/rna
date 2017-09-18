@@ -2,8 +2,11 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+from itertools import chain
+
 from django.conf import settings
 from django.db import models
+from django.forms.models import model_to_dict
 from django.utils.timezone import now
 from django_extensions.db.fields import CreationDateTimeField
 
@@ -44,6 +47,19 @@ class Release(TimeStampedModel):
     bug_list = models.TextField(blank=True)
     bug_search_url = models.CharField(max_length=2000, blank=True)
     system_requirements = models.TextField(blank=True)
+
+    @property
+    def slug(self):
+        product = self.product
+        channel = self.channel
+        if product.lower() == 'firefox extended support release':
+            product = 'firefox'
+            channel = 'esr'
+        return '{}-{}-{}'.format(
+            product.lower().replace(' ', '-'),
+            channel.lower(),
+            self.version,
+        )
 
     def major_version(self):
         return self.version.split('.', 1)[0]
@@ -119,8 +135,16 @@ class Release(TimeStampedModel):
 
         return new_features, known_issues
 
+    def to_dict(self):
+        data = model_to_dict(self, exclude=['created', 'modified', 'id'])
+        data['title'] = unicode(self)
+        data['slug'] = self.slug
+        data['release_date'] = self.release_date.date().isoformat()
+        data['notes'] = [n.to_dict() for n in chain(*self.notes())]
+        return data
+
     def __unicode__(self):
-        return '{product} {version} {channel}'.format(
+        return '{product} {channel} {version}'.format(
             product=self.product, version=self.version, channel=self.channel)
 
     class Meta:
@@ -147,6 +171,16 @@ class Note(TimeStampedModel):
 
     def is_known_issue_for(self, release):
         return self.is_known_issue and self.fixed_in_release != release
+
+    def to_dict(self, release=None):
+        data = model_to_dict(self, exclude=['id', 'created', 'modified', 'releases'])
+        data['releases'] = [rel.slug for rel in self.releases.all()]
+        if self.fixed_in_release:
+            data['fixed_in_release'] = self.fixed_in_release.version
+        if release and self.is_known_issue_for(release):
+            data['tag'] = 'Known'
+
+        return data
 
     def __unicode__(self):
         return self.note
